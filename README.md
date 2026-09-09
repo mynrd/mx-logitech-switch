@@ -1,5 +1,7 @@
 # Logitech MX Easy-Switch tools
 
+Unofficial. Not affiliated with or endorsed by Logitech. "Logitech" and "MX" are trademarks of Logitech.
+
 Two small Python tools for Logitech MX devices connected over **Bluetooth**, built and tested with an MX Master 3 and an MX Keys Mini. Both talk HID++ 2.0 (Logitech's vendor protocol) directly through `hidapi`. No driver, no admin rights, no Logi Options+ needed (it can stay installed).
 
 | Tool | What it does |
@@ -59,6 +61,8 @@ The Easy-Switch keys cannot be intercepted (HID++ reports them as not divertable
 
 `mx_follow.py` keeps one reader thread per device, and on that event writes `setCurrentHost(host index)` to every other connected device. Host numbers are matched 1:1, so pair both devices to the same channel numbers on each machine.
 
+Devices reconnect to Windows at different speeds (the mouse is often 10 to 50s behind the keyboard). If the event fires while the other device is not connected yet, the target is remembered for 20s and sent as soon as that device appears. If the source device comes back first, the pending target is dropped.
+
 ## Troubleshooting
 
 Both tools log to a file next to the script (`mx_switch.log`, `mx_follow.log`).
@@ -77,3 +81,7 @@ Both tools log to a file next to the script (`mx_switch.log`, `mx_follow.log`).
 | `mx_follow.py` | Follow service |
 | `MX Switch.bat`, `MX Follow.bat`, `Stop MX Follow.bat` | Launchers using the venv's `pythonw` |
 | `requirements.txt` | `hidapi`, `pystray`, `Pillow` |
+
+## License
+
+MIT, see `LICENSE`.
