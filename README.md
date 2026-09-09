@@ -61,7 +61,7 @@ The Easy-Switch keys cannot be intercepted (HID++ reports them as not divertable
 
 `mx_follow.py` keeps one reader thread per device, and on that event writes `setCurrentHost(host index)` to every other connected device. Host numbers are matched 1:1, so pair both devices to the same channel numbers on each machine.
 
-Devices reconnect to Windows at different speeds (the mouse is often 10 to 50s behind the keyboard). If the event fires while the other device is not connected yet, the target is remembered for 20s and sent as soon as that device appears. If the source device comes back first, the pending target is dropped.
+The keyboard is the single source of truth. Its event writes a tag ("others must go to host N") to `mx_follow.state`. The mouse is forced to N immediately if connected, or as soon as it appears. The tag is cleared when the mouse actually leaves, or when the keyboard itself comes back first. With no tag set the service does nothing, so moving the mouse by hand is never overridden.
 
 ## Troubleshooting
 
