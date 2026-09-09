@@ -34,6 +34,7 @@ FEATURE_CHANGE_HOST = 0x1814
 SW_ID = 0x0A
 REPLY_TIMEOUT_S = 3        # a stale BLE handle right after reconnect never answers; give up fast and reopen
 PENDING_WINDOW_S = 20      # forward a switch to a device that connects this soon after the event
+SOURCE_GRACE_S = 10        # ...but first wait this long for the source device to reappear (they may be coming back together)
 
 DEVICES = {                     # name: substring of the BLE product string
     "keyboard": "mx_keys_mini",
@@ -200,7 +201,7 @@ def main():
         f.write(str(os.getpid()))
 
     devices = []
-    pending = {"source": None, "target": None, "at": 0.0}
+    pending = {"id": 0, "source": None, "target": None, "at": 0.0}
 
     def send(d, target):
         if d.current_host == target:
@@ -212,7 +213,7 @@ def main():
             log.error("%s: switch failed: %s", d.name, e)
 
     def on_switch(source, target):
-        pending.update(source=source, target=target, at=time.monotonic())
+        pending.update(id=pending["id"] + 1, source=source, target=target, at=time.monotonic())
         for d in devices:
             if d is source:
                 continue
@@ -222,6 +223,20 @@ def main():
                 continue
             send(d, target)
 
+    def forward_if_source_still_away(d, event_id):
+        if pending["id"] != event_id or pending["target"] is None:
+            return                                    # dropped or superseded meanwhile
+        source, target = pending["source"], pending["target"]
+        pending["target"] = None                      # one forward per event, never twice
+        if source.connected:
+            log.info("%s: %s came back within %ds, not forwarding", d.name, source.name, SOURCE_GRACE_S)
+            return
+        if not d.connected:
+            log.info("%s: left again before forwarding", d.name)
+            return
+        log.info("%s: %s still away after %ds, forwarding to host %d", d.name, source.name, SOURCE_GRACE_S, target)
+        send(d, target)
+
     def on_connect(d):
         if pending["target"] is None:
             return
@@ -230,11 +245,12 @@ def main():
             pending["target"] = None
             return
         age = time.monotonic() - pending["at"]
-        if age <= PENDING_WINDOW_S:
-            log.info("%s: connected %.1fs after event, forwarding to host %d", d.name, age, pending["target"])
-            send(d, pending["target"])
-        else:
+        if age > PENDING_WINDOW_S:
             pending["target"] = None
+            return
+        log.info("%s: connected %.1fs after event, waiting %ds to see if %s comes back too",
+                 d.name, age, SOURCE_GRACE_S, pending["source"].name)
+        threading.Timer(SOURCE_GRACE_S, forward_if_source_still_away, args=(d, pending["id"])).start()
 
     for name, match in DEVICES.items():
         devices.append(Device(name, match, on_switch, on_connect))
