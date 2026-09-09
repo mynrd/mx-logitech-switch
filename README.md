@@ -39,7 +39,13 @@ Press Host 2 or 3 on the MX Keys Mini and the MX Master 3 jumps to the same host
 .venv\Scripts\python mx_follow.py     # foreground, logs to console and mx_follow.log
 ```
 
-`MX Follow.bat` starts it hidden, `Stop MX Follow.bat` kills it (uses `mx_follow.pid`). To run at login, put a shortcut to `MX Follow.bat` in `shell:startup`.
+`MX Follow.bat` starts it hidden. While running it shows a mouse icon in the tray (bottom right, may be under the `^` overflow arrow). Right-click it for:
+
+- Keyboard / Mouse status (host number, or "away")
+- Open log
+- Exit
+
+Starting it while another copy is running stops the old copy first, so double-clicking the bat twice is safe. `Stop MX Follow.bat` also kills it without the tray. To run at login, put a shortcut to `MX Follow.bat` in `shell:startup`.
 
 The service only sees devices while they are connected to this PC, so it can only push devices *away*. To come back to this PC together, run the service on the other machine too, or press both devices' host buttons.
 
@@ -70,4 +76,4 @@ Both tools log to a file next to the script (`mx_switch.log`, `mx_follow.log`).
 | `mx_switch.py` | Mouse host switcher: HID++ client, CLI, tkinter GUI |
 | `mx_follow.py` | Follow service |
 | `MX Switch.bat`, `MX Follow.bat`, `Stop MX Follow.bat` | Launchers using the venv's `pythonw` |
-| `requirements.txt` | `hidapi` |
+| `requirements.txt` | `hidapi`, `pystray`, `Pillow` |

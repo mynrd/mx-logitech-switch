@@ -4,19 +4,28 @@ The keyboard (and mouse) emit a HID++ Change Host (0x1814) event right before le
     11 ff <idx> 00 00 <hostIndex>
 hostIndex is 0-based. On that event every other connected device is told to switch to the same host.
 
+Runs with a system tray icon (bottom right). Right-click it for device status, the log, and Exit.
+Starting it while another instance is running stops the old one first.
+
 Usage:
-    python mx_follow.py            # run in foreground, logs to console + mx_follow.log
+    python mx_follow.py            # logs to console + mx_follow.log
     MX Follow.bat / Stop MX Follow.bat
 """
 import logging
 import os
+import signal
+import subprocess
 import sys
 import threading
 import time
 
 import hid
+import pystray
+from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+LOG_PATH = os.path.join(HERE, "mx_follow.log")
+PID_PATH = os.path.join(HERE, "mx_follow.pid")
 VID = 0x046D
 HIDPP_BLE_USAGE_PAGE = 0xFF43
 LONG_REPORT = 0x11
@@ -127,13 +136,62 @@ class Device(threading.Thread):
                 time.sleep(1)
 
 
+def stop_previous_instance():
+    try:
+        with open(PID_PATH) as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return
+    if pid == os.getpid():
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        log.info("stopped previous instance (pid %d)", pid)
+        time.sleep(0.5)
+    except OSError:
+        pass
+
+
+def make_icon_image():
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((4, 4, 60, 60), radius=14, fill=(40, 40, 40, 255))
+    d.rounded_rectangle((16, 10, 48, 54), radius=12, outline=(240, 240, 240, 255), width=4)   # mouse body
+    d.line((32, 10, 32, 28), fill=(240, 240, 240, 255), width=4)                                # button split
+    return img
+
+
+def build_tray(devices):
+    def status_line(d):
+        return lambda item: f"{d.name.capitalize()}: host {d.current_host} of {d.host_count}" if d.connected             else f"{d.name.capitalize()}: away"
+
+    def open_log(icon, item):
+        subprocess.Popen(["notepad.exe", LOG_PATH])
+
+    def quit_app(icon, item):
+        log.info("exit from tray")
+        icon.stop()
+        os._exit(0)
+
+    menu = pystray.Menu(
+        pystray.MenuItem("MX Follow", None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        *[pystray.MenuItem(status_line(d), None, enabled=False) for d in devices],
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Open log", open_log),
+        pystray.MenuItem("Exit", quit_app),
+    )
+    return pystray.Icon("mx_follow", make_icon_image(), "MX Follow", menu)
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(os.path.join(HERE, "mx_follow.log")), logging.StreamHandler(sys.stdout)],
+        handlers=[logging.FileHandler(LOG_PATH), logging.StreamHandler(sys.stdout)],
     )
-    with open(os.path.join(HERE, "mx_follow.pid"), "w") as f:
+    stop_previous_instance()
+    with open(PID_PATH, "w") as f:
         f.write(str(os.getpid()))
 
     devices = []
@@ -156,8 +214,7 @@ def main():
         d.start()
     log.info("mx_follow started, watching %s", ", ".join(DEVICES))
     try:
-        while True:
-            time.sleep(3600)
+        build_tray(devices).run()      # blocks on the tray message loop until Exit
     except KeyboardInterrupt:
         pass
 
