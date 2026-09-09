@@ -32,6 +32,8 @@ LONG_REPORT = 0x11
 DEV_INDEX = 0xFF
 FEATURE_CHANGE_HOST = 0x1814
 SW_ID = 0x0A
+REPLY_TIMEOUT_S = 3        # a stale BLE handle right after reconnect never answers; give up fast and reopen
+PENDING_WINDOW_S = 20      # forward a switch to a device that connects this soon after the event
 
 DEVICES = {                     # name: substring of the BLE product string
     "keyboard": "mx_keys_mini",
@@ -42,11 +44,12 @@ log = logging.getLogger("mx_follow")
 
 
 class Device(threading.Thread):
-    def __init__(self, name, product_match, on_switch):
+    def __init__(self, name, product_match, on_switch, on_connect):
         super().__init__(name=name, daemon=True)
         self.name = name
         self.match = product_match
         self.on_switch = on_switch
+        self.on_connect = on_connect
         self.h = None
         self.change_host_idx = None
         self.host_count = None
@@ -64,10 +67,11 @@ class Device(threading.Thread):
         header = (func << 4) | SW_ID
         with self.lock:
             self.h.write((bytes([LONG_REPORT, DEV_INDEX, feat_idx, header]) + params).ljust(20, b"\0"))
-        for _ in range(30):
-            r = bytes(self.h.read(64, timeout_ms=1000))
+        deadline = time.monotonic() + REPLY_TIMEOUT_S
+        while time.monotonic() < deadline:
+            r = bytes(self.h.read(64, timeout_ms=500))
             if not r:
-                raise TimeoutError(f"{self.name}: no reply to feature {feat_idx} func {func}")
+                continue
             if r[0] != LONG_REPORT:
                 continue
             if r[2] == 0xFF and r[3] == feat_idx and r[4] == header:
@@ -116,6 +120,7 @@ class Device(threading.Thread):
                 self.h.open_path(path)
                 self._setup()
                 log.info("%s: connected, host %d of %d", self.name, self.current_host, self.host_count)
+                self.on_connect(self)
                 while True:
                     r = bytes(self.h.read(64, timeout_ms=500))
                     if r and r[0] == LONG_REPORT:
@@ -195,21 +200,44 @@ def main():
         f.write(str(os.getpid()))
 
     devices = []
+    pending = {"source": None, "target": None, "at": 0.0}
+
+    def send(d, target):
+        if d.current_host == target:
+            log.info("%s: already on host %d, nothing to do", d.name, target)
+            return
+        try:
+            d.switch_to(target)
+        except Exception as e:
+            log.error("%s: switch failed: %s", d.name, e)
 
     def on_switch(source, target):
+        pending.update(source=source, target=target, at=time.monotonic())
         for d in devices:
-            if d is source or not d.connected:
+            if d is source:
                 continue
-            if d.current_host == target:
-                log.info("%s: already on host %d, nothing to do", d.name, target)
+            if not d.connected:
+                log.info("%s: not connected yet, will forward host %d if it appears within %ds",
+                         d.name, target, PENDING_WINDOW_S)
                 continue
-            try:
-                d.switch_to(target)
-            except Exception as e:
-                log.error("%s: switch failed: %s", d.name, e)
+            send(d, target)
+
+    def on_connect(d):
+        if pending["target"] is None:
+            return
+        if d is pending["source"]:
+            log.info("%s: back before the others followed, dropping pending host %d", d.name, pending["target"])
+            pending["target"] = None
+            return
+        age = time.monotonic() - pending["at"]
+        if age <= PENDING_WINDOW_S:
+            log.info("%s: connected %.1fs after event, forwarding to host %d", d.name, age, pending["target"])
+            send(d, pending["target"])
+        else:
+            pending["target"] = None
 
     for name, match in DEVICES.items():
-        devices.append(Device(name, match, on_switch))
+        devices.append(Device(name, match, on_switch, on_connect))
     for d in devices:
         d.start()
     log.info("mx_follow started, watching %s", ", ".join(DEVICES))
